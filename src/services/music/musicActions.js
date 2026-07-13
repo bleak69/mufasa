@@ -2,7 +2,7 @@ import { MessageFlags } from 'discord.js';
 import { successEmbed } from '../../utils/embeds.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
-import { getGuildMusicData, saveVolumePreference } from './playerStore.js';
+import { getGuildMusicData, clearUpdateInterval } from './playerStore.js';
 import { canControlMusic, requireVoiceChannel, VOICE_CHANNEL_DENIAL } from './permissions.js';
 import {
     buildNowPlayingEmbed,
@@ -11,7 +11,6 @@ import {
     getQueuePageSize,
 } from './musicEmbeds.js';
 import { refreshPlayerMessage } from './playerHandler.js';
-import { logger } from '../../utils/logger.js';
 
 export function getPlayer(client, guildId) {
     return client.riffy?.players?.get(guildId) || null;
@@ -20,9 +19,9 @@ export function getPlayer(client, guildId) {
 export function assertRiffyAvailable(client) {
     if (!client.riffy) {
         throw new TitanBotError(
-            'Music service unavailable',
+            'Lavalink not configured',
             ErrorTypes.CONFIGURATION,
-            'The music service is currently offline.\n\n🔧 **Troubleshooting:**\n• Lavalink server may be down\n• Check bot Lavalink configuration\n• Try again in a few moments',
+            'Music is unavailable — Lavalink is not configured.',
         );
     }
 }
@@ -32,7 +31,7 @@ export function assertInVoice(member) {
         throw new TitanBotError(
             'Not in voice channel',
             ErrorTypes.USER_INPUT,
-            'You need to be in a voice channel to use music commands.',
+            'You need to be in a voice channel.',
         );
     }
 }
@@ -52,26 +51,17 @@ export async function ensurePlayer(client, interaction) {
     assertInVoice(interaction.member);
 
     const guildId = interaction.guild.id;
-    const guildData = await getGuildMusicData(guildId, client);
+    const guildData = getGuildMusicData(guildId);
     let player = getPlayer(client, guildId);
 
     if (!player) {
-        try {
-            player = client.riffy.createConnection({
-                guildId,
-                voiceChannel: interaction.member.voice.channel.id,
-                textChannel: interaction.channel.id,
-                deaf: true,
-            });
-            guildData.playerChannelId = interaction.channel.id;
-        } catch (error) {
-            logger.error('Failed to create connection:', error);
-            throw new TitanBotError(
-                'Connection failed',
-                ErrorTypes.CONFIGURATION,
-                'Could not connect to voice channel. Check Lavalink configuration.',
-            );
-        }
+        player = client.riffy.createConnection({
+            guildId,
+            voiceChannel: interaction.member.voice.channel.id,
+            textChannel: interaction.channel.id,
+            deaf: true,
+        });
+        guildData.playerChannelId = interaction.channel.id;
     }
 
     player.setVolume(guildData.volume);
@@ -89,28 +79,12 @@ function isDuplicateTrack(player, track) {
     return player.queue.some((existing) => existing.info?.uri === uri);
 }
 
-function findSimilarTracks(player, track) {
-    const artist = track?.info?.author?.toLowerCase() || '';
-    const title = track?.info?.title?.toLowerCase() || '';
-    
-    const similar = [];
-    
-    // Check queue for tracks by same artist
-    for (const queueTrack of player.queue) {
-        if (queueTrack.info?.author?.toLowerCase() === artist && similar.length < 2) {
-            similar.push(queueTrack.info?.title || 'Unknown');
-        }
-    }
-    
-    return similar;
-}
-
 export async function joinVoiceChannel(client, interaction) {
     assertRiffyAvailable(client);
     assertInVoice(interaction.member);
 
     const guildId = interaction.guild.id;
-    const guildData = await getGuildMusicData(guildId, client);
+    const guildData = getGuildMusicData(guildId);
     const channel = interaction.member.voice.channel;
     let player = getPlayer(client, guildId);
 
@@ -124,22 +98,13 @@ export async function joinVoiceChannel(client, interaction) {
     }
 
     if (!player) {
-        try {
-            player = client.riffy.createConnection({
-                guildId,
-                voiceChannel: channel.id,
-                textChannel: interaction.channel.id,
-                deaf: true,
-            });
-            guildData.playerChannelId = interaction.channel.id;
-        } catch (error) {
-            logger.error('Failed to create connection:', error);
-            throw new TitanBotError(
-                'Connection failed',
-                ErrorTypes.CONFIGURATION,
-                'Could not connect to voice channel.',
-            );
-        }
+        player = client.riffy.createConnection({
+            guildId,
+            voiceChannel: channel.id,
+            textChannel: interaction.channel.id,
+            deaf: true,
+        });
+        guildData.playerChannelId = interaction.channel.id;
     }
 
     player.setVolume(guildData.volume);
@@ -151,22 +116,13 @@ export async function joinVoiceChannel(client, interaction) {
 }
 
 export async function playQuery(client, interaction, query) {
+
     const { player, guildData } = await ensurePlayer(client, interaction);
 
-    let result;
-    try {
-        result = await client.riffy.resolve({
-            query,
-            requester: interaction.user,
-        });
-    } catch (error) {
-        logger.error('Failed to resolve track:', error);
-        throw new TitanBotError(
-            'Search failed',
-            ErrorTypes.USER_INPUT,
-            'Could not search for that track. The search service may be temporarily unavailable.',
-        );
-    }
+    const result = await client.riffy.resolve({
+        query,
+        requester: interaction.user,
+    });
 
     const { loadType, tracks, playlistInfo } = result;
 
@@ -208,12 +164,11 @@ export async function playQuery(client, interaction, query) {
         }
 
         if (isDuplicateTrack(player, track)) {
-            const similar = findSimilarTracks(player, track);
-            let message = `**${track.info.title}** is already in the queue or playing.`;
-            if (similar.length > 0) {
-                message += `\n\n**Similar tracks available:**\n${similar.map((t, i) => `${i + 1}. ${t}`).join('\n')}`;
-            }
-            throw new TitanBotError('Duplicate track', ErrorTypes.USER_INPUT, message);
+            throw new TitanBotError(
+                'Duplicate track',
+                ErrorTypes.USER_INPUT,
+                `**${track.info.title}** is already in the queue or playing.`,
+            );
         }
 
         track.info.requester = interaction.user;
@@ -246,6 +201,8 @@ export async function skipTrack(client, interaction) {
     }
     assertCanControl(interaction.member, player);
     const title = player.current.info?.title || 'Unknown';
+    // Under track-loop, stop() would replay the same track. Clear it so the skip
+    // advances; trackStart re-applies the stored loop mode to the next track.
     if (player.loop === 'track') {
         player.setLoop('none');
     }
@@ -260,7 +217,7 @@ export async function stopPlayback(client, interaction) {
     }
     assertCanControl(interaction.member, player);
 
-    const guildData = await getGuildMusicData(interaction.guild.id, client);
+    const guildData = getGuildMusicData(interaction.guild.id);
     const queueLength = player.queue?.length || 0;
 
     if (queueLength >= 5 && guildData.stopConfirmPending !== interaction.user.id) {
@@ -340,8 +297,7 @@ export async function shuffleQueue(client, interaction) {
     }
     assertCanControl(interaction.member, player);
     player.queue.shuffle();
-    const guildData = await getGuildMusicData(interaction.guild.id, client);
-    guildData.shuffle = true;
+    getGuildMusicData(interaction.guild.id).shuffle = true;
     await refreshPlayerMessage(client, interaction.guild.id);
     return successEmbed('Shuffled', 'The queue has been shuffled.');
 }
@@ -353,7 +309,7 @@ export async function setLoopMode(client, interaction, mode) {
     }
     assertCanControl(interaction.member, player);
 
-    const guildData = await getGuildMusicData(interaction.guild.id, client);
+    const guildData = getGuildMusicData(interaction.guild.id);
     guildData.loop = mode;
     player.setLoop(mode);
 
@@ -363,7 +319,7 @@ export async function setLoopMode(client, interaction, mode) {
 }
 
 export async function toggleLoop(client, interaction) {
-    const guildData = await getGuildMusicData(interaction.guild.id, client);
+    const guildData = getGuildMusicData(interaction.guild.id);
     const next = guildData.loop === 'none' ? 'track' : guildData.loop === 'track' ? 'queue' : 'none';
     return setLoopMode(client, interaction, next);
 }
@@ -375,19 +331,15 @@ export async function setVolume(client, interaction, volume) {
     }
     assertCanControl(interaction.member, player);
 
-    const guildData = await getGuildMusicData(interaction.guild.id, client);
+    const guildData = getGuildMusicData(interaction.guild.id);
     guildData.volume = Math.max(0, Math.min(100, volume));
     player.setVolume(guildData.volume);
-    
-    // Save volume preference
-    await saveVolumePreference(client, interaction.guild.id, guildData.volume);
-    
     await refreshPlayerMessage(client, interaction.guild.id);
     return successEmbed('Volume Updated', `Volume set to **${guildData.volume}%**.`);
 }
 
 export async function adjustVolume(client, interaction, delta) {
-    const guildData = await getGuildMusicData(interaction.guild.id, client);
+    const guildData = getGuildMusicData(interaction.guild.id);
     return setVolume(client, interaction, guildData.volume + delta);
 }
 
@@ -471,7 +423,7 @@ export async function clearQueue(client, interaction) {
 }
 
 export async function setTwentyFourSeven(client, interaction, enabled) {
-    const guildData = await getGuildMusicData(interaction.guild.id, client);
+    const guildData = getGuildMusicData(interaction.guild.id);
     guildData.twentyFourSeven = enabled;
     return successEmbed(
         '24/7 Mode',
@@ -498,16 +450,7 @@ export function buildQueueReply(client, guildId, page = 0) {
         throw new TitanBotError('No player', ErrorTypes.USER_INPUT, 'No active music player.');
     }
 
-    const queueLength = player.queue?.length || 0;
-    if (queueLength === 0) {
-        throw new TitanBotError(
-            'Queue empty',
-            ErrorTypes.USER_INPUT,
-            queueLength === 0 && !player.current ? 'There is no queue.' : 'The queue is empty. Only the current track is playing.',
-        );
-    }
-
-    const totalPages = Math.max(1, Math.ceil(queueLength / getQueuePageSize()));
+    const totalPages = Math.max(1, Math.ceil((player.queue?.length || 0) / getQueuePageSize()));
     const safePage = Math.min(Math.max(page, 0), totalPages - 1);
 
     return {
@@ -519,10 +462,7 @@ export function buildQueueReply(client, guildId, page = 0) {
 }
 
 export async function destroyPlayerSession(client, guildId, player, guildData, { forceDisconnect = false } = {}) {
-    // Clear all intervals and timeouts
-    if (guildData.updateInterval) {
-        clearInterval(guildData.updateInterval);
-    }
+    clearUpdateInterval(guildData);
     if (guildData.idleTimeout) {
         clearTimeout(guildData.idleTimeout);
         guildData.idleTimeout = null;
@@ -569,7 +509,7 @@ export async function leaveVoiceChannel(client, interaction) {
 
     const channel = interaction.guild.channels.cache.get(player.voiceChannel);
     const channelName = channel?.name || 'voice channel';
-    const guildData = await getGuildMusicData(guildId, client);
+    const guildData = getGuildMusicData(guildId);
 
     await destroyPlayerSession(client, guildId, player, guildData, { forceDisconnect: true });
 
