@@ -51,7 +51,7 @@ export async function refreshPlayerMessage(client, guildId) {
         const guildData = getGuildMusicData(guildId);
         const embed = buildNowPlayingEmbed(player.current, player, guildData);
         const components = buildPlayerButtonRows(player, guildData);
-        const channelId = guildData.playerChannelId || player.textChannel;
+        const channelId = guildData.playerChannelId;
         await editOrSendPlayerMessage(client, guildData, channelId, embed, components);
     } catch (error) {
         logger.error('Failed to refresh music player message:', error);
@@ -106,7 +106,7 @@ export function setupPlayerHandler(client) {
 
             const embed = buildNowPlayingEmbed(track, player, guildData);
             const components = buildPlayerButtonRows(player, guildData);
-            const channelId = guildData.playerChannelId || player.textChannel;
+            const channelId = guildData.playerChannelId;
             await editOrSendPlayerMessage(client, guildData, channelId, embed, components);
             startUpdateInterval(client, player.guildId);
         } catch (error) {
