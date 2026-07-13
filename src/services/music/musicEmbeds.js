@@ -41,12 +41,25 @@ function getTrackArtwork(track) {
 function getLoopLabel(loop) {
     switch (loop) {
         case 'track':
-            return 'Track';
+            return '🔂 Track';
         case 'queue':
-            return 'Queue';
+            return '🔁 Queue';
         default:
-            return 'Off';
+            return '⊘ Off';
     }
+}
+
+function buildProgressBar(current, max, size = 12) {
+    if (!max || max === 0) return '▬▬▬▬▬▬▬▬▬▬▬▬';
+    
+    const progress = Math.min(Math.max(0, current / max), 1);
+    const filled = Math.round(size * progress);
+    const empty = size - filled;
+    return `${'▰'.repeat(filled)}${'▱'.repeat(empty)}`;
+}
+
+function getPlayStatusEmoji(paused) {
+    return paused ? '⏸️ Paused' : '▶️ Playing';
 }
 
 export function buildNowPlayingEmbed(track, player, guildData) {
@@ -57,21 +70,58 @@ export function buildNowPlayingEmbed(track, player, guildData) {
 
     const position = formatDuration(player?.position || 0);
     const duration = formatDuration(track?.info?.length || 0);
+    
+    const progressBar = buildProgressBar(player?.position || 0, track?.info?.length || 1);
+    
+    // Enhanced description with better formatting
+    const description = `
+╭─ 🎵 **${track?.info?.title || 'Unknown Track'}**
+├─ Artist: **${track?.info?.author || 'Unknown'}**
+├─ Requested by: **${requesterLabel}**
+╰─ Source: **${track?.info?.sourceName || 'YouTube'}**
+
+${progressBar}
+**${position}** / **${duration}**
+`;
 
     return createEmbed({
-        title: 'Now Playing',
-        description: track?.info?.title || 'Unknown track',
+        title: '🎶 Now Playing',
+        description: description.trim(),
         color: 'primary',
         fields: [
-            { name: 'Artist', value: track?.info?.author || 'Unknown', inline: true },
-            { name: 'Requester', value: requesterLabel, inline: true },
-            { name: 'Progress', value: `${position} / ${duration}`, inline: true },
-            { name: 'Volume', value: `${guildData?.volume ?? 75}%`, inline: true },
-            { name: 'Loop', value: getLoopLabel(guildData?.loop), inline: true },
-            { name: 'Queue', value: `${player?.queue?.length || 0} track(s)`, inline: true },
+            { 
+                name: '📊 Status', 
+                value: `${getPlayStatusEmoji(player?.paused)} • Volume: **${guildData?.volume ?? 75}%** 🔊`, 
+                inline: true 
+            },
+            { 
+                name: '🔄 Loop', 
+                value: getLoopLabel(guildData?.loop), 
+                inline: true 
+            },
+            { 
+                name: '📋 Queue', 
+                value: `**${player?.queue?.length || 0}** track(s) queued`, 
+                inline: true 
+            },
+            {
+                name: '⏱️ Duration',
+                value: `**${duration}**`,
+                inline: true
+            },
+            {
+                name: '🔀 Shuffle',
+                value: guildData?.shuffle ? '✅ On' : '❌ Off',
+                inline: true
+            },
+            {
+                name: '👥 Queue Size',
+                value: `**${player?.queue?.length || 0}** tracks`,
+                inline: true
+            },
         ],
         thumbnail: getTrackArtwork(track),
-        footer: player?.paused ? 'Paused' : 'Playing',
+        footer: `🎵 Powered by Mufasa • ${player?.paused ? 'Paused' : 'Playing'}`,
     });
 }
 
@@ -83,31 +133,41 @@ export function buildQueueEmbed(queue, currentTrack, page = 0) {
     const slice = queue?.slice(start, start + QUEUE_PAGE_SIZE) || [];
 
     let description = '';
+    
+    // Now Playing section
     if (currentTrack) {
-        description += `**Now Playing**\n${currentTrack.info?.title || 'Unknown'} — ${currentTrack.info?.author || 'Unknown'}\n\n`;
+        description += `╭─ 🎵 **NOW PLAYING**\n`;
+        description += `├─ ${currentTrack.info?.title || 'Unknown'}\n`;
+        description += `├─ By: ${currentTrack.info?.author || 'Unknown'}\n`;
+        description += `╰─ Duration: ${formatDuration(currentTrack.info?.length || 0)}\n\n`;
     }
 
+    // Queue section
     if (slice.length === 0) {
-        description += 'The queue is empty.';
+        description += '📭 The queue is empty.';
     } else {
-        description += slice
-            .map((track, index) => {
-                const num = start + index + 1;
-                return `${num}. ${track.info?.title || 'Unknown'} — ${track.info?.author || 'Unknown'}`;
-            })
-            .join('\n');
+        description += '╭─ 📋 **QUEUE**\n';
+        slice.forEach((track, index) => {
+            const num = start + index + 1;
+            const duration = formatDuration(track.info?.length || 0);
+            const isLast = index === slice.length - 1;
+            const prefix = isLast ? '╰─' : '├─';
+            description += `${prefix} **${num}.** ${track.info?.title || 'Unknown'} **(${duration})**\n`;
+            description += `│  └─ By: ${track.info?.author || 'Unknown'}\n`;
+        });
     }
 
     return createEmbed({
-        title: 'Music Queue',
+        title: '📋 Music Queue',
         description: description.substring(0, 4096),
         color: 'info',
-        footer: `Page ${safePage + 1} of ${totalPages} • ${totalTracks} queued`,
+        footer: `Page ${safePage + 1} of ${totalPages} • ${totalTracks} total tracks`,
     });
 }
 
 export function buildPlayerButtonRows(player, guildData) {
     const paused = player?.paused;
+    
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(MUSIC_BUTTON_IDS.PAUSE)
