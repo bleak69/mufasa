@@ -23,7 +23,7 @@ const appConfig = {
     token: process.env.DISCORD_TOKEN || process.env.TOKEN,
     clientId: process.env.CLIENT_ID,
     guildId: process.env.GUILD_ID,
-    multiGuild: process.env.MULTI_GUILD === 'false',
+    multiGuild: process.env.MULTI_GUILD === 'true',
 
     shop: {
       ...botConfig.shop,
