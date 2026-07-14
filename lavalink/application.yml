@@ -3,9 +3,6 @@ server:
   address: 0.0.0.0
 
 lavalink:
-  plugins:
-    - dependency: "dev.lavalink.youtube:youtube-plugin:1.13.5"
-      snapshot: false
   server:
     password: "${LAVALINK_PASSWORD:youshallnotpass}"
     sources:
@@ -14,6 +11,17 @@ lavalink:
       soundcloud: true
       http: true
       local: false
+    filters:
+      volume: true
+      equalizer: true
+      karaoke: true
+      timescale: true
+      tremolo: true
+      vibrato: true
+      distortion: true
+      rotation: true
+      channelMix: true
+      lowPass: true
 
 plugins:
   youtube:
@@ -26,3 +34,4 @@ plugins:
       - ANDROID_TESTSUITE
       - WEB
       - CONTENT_HOUSE
+      - ANDROID_VR
